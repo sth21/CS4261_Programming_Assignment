@@ -63,3 +63,6 @@ fastlane/test_output
 .DS_Store
 *.pub
 gatechkey
+.venv/
+.env
+__pycache__/
