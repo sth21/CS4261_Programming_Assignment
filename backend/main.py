@@ -25,7 +25,7 @@ def health():
 @app.get("/games")
 def list_games(
     season: int = 2026,
-    week: int | None = None,
+    week: int | None = Query(None, ge=1, le=15),
     team: str | None = None,
     conference: str | None = None,
     session: Session = Depends(get_session),
@@ -47,7 +47,7 @@ def list_games(
 @app.post("/games/refresh")
 def refresh_games(
     season: int = 2026,
-    week: int = Query(...),
+    week: int = Query(..., ge=1, le=15),
     session: Session = Depends(get_session),
 ):
     raw_games = cfbd.fetch_games(season, week)
