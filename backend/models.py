@@ -23,7 +23,10 @@ class Game(SQLModel, table=True):
     home_points: int | None = None
     away_points: int | None = None
     venue: str | None = None
-    last_synced_at: datetime = Field(default_factory=utc_now)
+    last_synced_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=True)),
+    )
 
 class Pick(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("user_id", "game_id"),)
