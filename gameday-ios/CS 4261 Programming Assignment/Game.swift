@@ -26,13 +26,6 @@ struct Game: Codable, Identifiable {
     
     var id: Int { cfbdId }
     
-    var homeLogoURL: URL? {
-        homeId.map { URL(string: "https://a.espncdn.com/i/teamlogos/ncaa/500/\($0).png")! }
-    }
-    var awayLogoURL: URL? {
-        awayId.map { URL(string: "https://a.espncdn.com/i/teamlogos/ncaa/500/\($0).png")! }
-    }
-    
     enum CodingKeys: String, CodingKey {
         case cfbdId = "cfbd_id"
         case season, week, completed, venue

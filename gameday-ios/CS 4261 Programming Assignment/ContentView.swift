@@ -111,7 +111,7 @@ struct GameRow: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
-                TeamSide(name: game.awayTeam, logo: game.awayLogoURL)
+                TeamSide(teamId: game.awayId, name: game.awayTeam)
 
                 VStack(spacing: 2) {
                     if game.completed {
@@ -134,7 +134,7 @@ struct GameRow: View {
                 }
                 .frame(width: 90)
 
-                TeamSide(name: game.homeTeam, logo: game.homeLogoURL)
+                TeamSide(teamId: game.homeId, name: game.homeTeam)
             }
 
             if let venue = game.venue {
@@ -148,12 +148,19 @@ struct GameRow: View {
 }
 
 struct TeamSide: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let teamId: Int?
     let name: String
-    let logo: URL?
+
+    var logoURL: URL? {
+        guard let teamId else { return nil }
+        let suffix = colorScheme == .dark ? "-dark" : ""
+        return URL(string: "https://a.espncdn.com/i/teamlogos/ncaa/500\(suffix)/\(teamId).png")
+    }
 
     var body: some View {
         VStack(spacing: 6) {
-            AsyncImage(url: logo) { image in
+            AsyncImage(url: logoURL) { image in
                 image.resizable().scaledToFit()
             } placeholder: {
                 Circle().fill(Color(.tertiarySystemFill))
