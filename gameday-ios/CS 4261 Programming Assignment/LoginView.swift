@@ -93,12 +93,14 @@ struct LoginView: View {
                 password: password,
                 register: mode == .signUp
             )
-        } catch APIError.badResponse(409) {
+        } catch APIError.server(409) {
             errorMessage = "That username is already taken."
-        } catch APIError.badResponse(401) {
+        } catch APIError.server(401) {
             errorMessage = "Incorrect username or password."
-        } catch {
+        } catch APIError.offline {
             errorMessage = "Couldn't connect. Check your connection and try again."
+        } catch {
+            errorMessage = "Something went wrong. Try again."
         }
         isLoading = false
     }
