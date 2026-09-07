@@ -1,11 +1,14 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(AuthStore.self) private var auth
+
     @State private var games: [Game] = []
-    @State private var week = 2
+    @State private var week = 1
     @State private var conference: String?
     @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State private var loadError: APIError?
+    @State private var hasResolvedWeek = false
 
     let conferences = ["ACC", "Big Ten", "Big 12", "SEC", "Pac-12", "American Athletic",
                        "Conference USA", "Mid-American", "Mountain West", "Sun Belt",
@@ -21,9 +24,7 @@ struct ContentView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(1...15, id: \.self) { w in
-                            Chip(label: "Week \(w)", isSelected: week == w) {
-                                week = w
-                            }
+                            Chip(label: "Week \(w)", isSelected: week == w) { week = w }
                         }
                     }
                     .padding(.horizontal)
@@ -32,9 +33,7 @@ struct ContentView: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        Chip(label: "All", isSelected: conference == nil) {
-                            conference = nil
-                        }
+                        Chip(label: "All", isSelected: conference == nil) { conference = nil }
                         ForEach(conferences, id: \.self) { c in
                             Chip(label: c, isSelected: conference == c) {
                                 conference = (conference == c) ? nil : c
@@ -45,63 +44,127 @@ struct ContentView: View {
                 }
                 .padding(.bottom, 6)
 
-                if let lastSynced {
+                if let lastSynced, !games.isEmpty {
                     Text("Synced \(lastSynced, format: .relative(presentation: .named))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
 
-                List {
-                    if let errorMessage {
-                        Text(errorMessage).foregroundStyle(.red)
-                    }
-                    ForEach(games) { game in
-                        GameRow(game: game)
-                    }
-                }
-                .listStyle(.plain)
-                .refreshable { await refresh() }
+                content
             }
             .navigationTitle("Week \(week)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Log Out") { auth.logOut() }
                 }
-                .disabled(isLoading)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                }
             }
-            .overlay { if isLoading { ProgressView() } }
             .task(id: "\(week)-\(conference ?? "all")") { await load() }
+        }
+    }
+
+    @ViewBuilder
+    var content: some View {
+        if isLoading && games.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let loadError {
+            ErrorState(error: loadError) { Task { await load() } }
+        } else if games.isEmpty {
+            ContentUnavailableView(
+                "No games",
+                systemImage: "football",
+                description: Text(conference == nil
+                    ? "Nothing scheduled for week \(week)."
+                    : "No \(conference!) games in week \(week).")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                ForEach(games) { game in
+                    GameRow(game: game)
+                }
+            }
+            .listStyle(.plain)
+            .refreshable { await refresh() }
         }
     }
 
     func load() async {
         isLoading = true
-        errorMessage = nil
+        loadError = nil
+        defer { isLoading = false }
+
         do {
+            if !hasResolvedWeek {
+                week = (try? await APIClient.fetchCurrentWeek()) ?? 1
+                hasResolvedWeek = true
+            }
+
             games = try await APIClient.fetchGames(week: week, conference: conference)
+
             if games.isEmpty && conference == nil {
                 try await APIClient.refreshGames(week: week)
                 games = try await APIClient.fetchGames(week: week)
             }
+        } catch APIError.unauthorized {
+            auth.logOut()
+        } catch let error as APIError {
+            loadError = error
         } catch {
-            errorMessage = "\(error)"
+            loadError = .offline
         }
-        isLoading = false
     }
 
     func refresh() async {
-        isLoading = true
-        errorMessage = nil
+        loadError = nil
         do {
             try await APIClient.refreshGames(week: week)
             games = try await APIClient.fetchGames(week: week, conference: conference)
+        } catch APIError.unauthorized {
+            auth.logOut()
+        } catch let error as APIError {
+            loadError = error
         } catch {
-            errorMessage = "\(error)"
+            loadError = .offline
         }
-        isLoading = false
+    }
+}
+
+struct ErrorState: View {
+    let error: APIError
+    let retry: () -> Void
+
+    var message: String {
+        switch error {
+        case .offline: "Can't reach the server. Check your connection."
+        case .server: "Something went wrong on our end."
+        case .unauthorized: "Your session expired."
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 36))
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Try Again", action: retry)
+                .buttonStyle(.bordered)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -197,4 +260,5 @@ struct Chip: View {
 
 #Preview {
     ContentView()
+        .environment(AuthStore())
 }

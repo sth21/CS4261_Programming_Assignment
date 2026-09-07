@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		22D52F19304F54E300135AB0 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 22D52F18304F54E300135AB0 /* KeychainAccess */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		228597503046511300F183DF /* CS 4261 Programming Assignment.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "CS 4261 Programming Assignment.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				22D52F19304F54E300135AB0 /* KeychainAccess in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = "CS 4261 Programming Assignment";
 			packageProductDependencies = (
+				22D52F18304F54E300135AB0 /* KeychainAccess */,
 			);
 			productName = "CS 4261 Programming Assignment";
 			productReference = 228597503046511300F183DF /* CS 4261 Programming Assignment.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 228597473046511300F183DF;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				22D52F17304F54E300135AB0 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 228597513046511300F183DF /* Products */;
 			projectDirPath = "";
@@ -330,6 +339,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		22D52F17304F54E300135AB0 /* XCRemoteSwiftPackageReference "KeychainAccess" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kishikawakatsumi/KeychainAccess";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		22D52F18304F54E300135AB0 /* KeychainAccess */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 22D52F17304F54E300135AB0 /* XCRemoteSwiftPackageReference "KeychainAccess" */;
+			productName = KeychainAccess;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 228597483046511300F183DF /* Project object */;
 }

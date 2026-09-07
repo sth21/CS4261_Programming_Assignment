@@ -150,6 +150,24 @@ def refresh_games(
     graded = grade_pending_picks(session)
     return {"synced": synced, "graded": graded, "season": season, "week": week}
 
+@app.get("/games/current-week")
+def current_week(season: int = 2026, session: Session = Depends(get_session)):
+    now = datetime.now(timezone.utc)
+
+    upcoming = session.exec(
+        select(Game)
+        .where(Game.season == season, Game.start_date >= now)
+        .order_by(Game.start_date)
+    ).first()
+    if upcoming:
+        return {"week": upcoming.week}
+
+    latest = session.exec(
+        select(Game)
+        .where(Game.season == season)
+        .order_by(Game.start_date.desc())
+    ).first()
+    return {"week": latest.week if latest else 1}
 
 @app.get("/picks")
 def list_picks(
