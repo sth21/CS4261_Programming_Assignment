@@ -32,6 +32,8 @@ def parse_game(raw: dict) -> dict:
         "week": raw["week"],
         "home_team": raw["homeTeam"],
         "away_team": raw["awayTeam"],
+        "home_id": raw.get("homeId"),
+        "away_id": raw.get("awayId"),
         "home_conference": raw["homeConference"],
         "away_conference": raw["awayConference"],
         "start_date": datetime.fromisoformat(raw["startDate"].replace("Z", "+00:00")),

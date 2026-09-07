@@ -13,6 +13,8 @@ struct Game: Codable, Identifiable {
     let week: Int
     let homeTeam: String
     let awayTeam: String
+    let homeId: Int?
+    let awayId: Int?
     let homeConference: String?
     let awayConference: String?
     let startDate: Date
@@ -24,11 +26,20 @@ struct Game: Codable, Identifiable {
     
     var id: Int { cfbdId }
     
+    var homeLogoURL: URL? {
+        homeId.map { URL(string: "https://a.espncdn.com/i/teamlogos/ncaa/500/\($0).png")! }
+    }
+    var awayLogoURL: URL? {
+        awayId.map { URL(string: "https://a.espncdn.com/i/teamlogos/ncaa/500/\($0).png")! }
+    }
+    
     enum CodingKeys: String, CodingKey {
         case cfbdId = "cfbd_id"
         case season, week, completed, venue
         case homeTeam = "home_team"
         case awayTeam = "away_team"
+        case homeId = "home_id"
+        case awayId = "away_id"
         case homeConference = "home_conference"
         case awayConference = "away_conference"
         case startDate = "start_date"

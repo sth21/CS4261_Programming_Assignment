@@ -16,6 +16,8 @@ class Game(SQLModel, table=True):
     week: int = Field(index=True)
     home_team: str = Field(index=True)
     away_team: str = Field(index=True)
+    home_id: int | None = None
+    away_id: int | None = None
     home_conference: str | None = None
     away_conference: str | None = None
     start_date: datetime = Field(sa_column=Column(DateTime(timezone=True)))
