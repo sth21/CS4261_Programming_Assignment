@@ -26,8 +26,7 @@ class Game(SQLModel, table=True):
     away_points: int | None = None
     venue: str | None = None
     last_synced_at: datetime = Field(
-        default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True)),
+        sa_column=Column(DateTime(timezone=True), default=utc_now, nullable=False),
     )
 
 class Pick(SQLModel, table=True):

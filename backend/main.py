@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from database import create_db_and_tables, get_session
-from models import Game
+from models import Game, User
+from auth import hash_password, verify_password, create_token, get_current_user
 import models
 import cfbd
 
@@ -17,9 +19,46 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Gameday Pick'em API", lifespan=lifespan)
 
 
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/auth/register")
+def register(creds: Credentials, session: Session = Depends(get_session)):
+    existing = session.exec(
+        select(User).where(User.username == creds.username)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    user = User(username=creds.username, password_hash=hash_password(creds.password))
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    return {"access_token": create_token(user.id), "token_type": "bearer"}
+
+
+@app.post("/auth/login")
+def login(creds: Credentials, session: Session = Depends(get_session)):
+    user = session.exec(
+        select(User).where(User.username == creds.username)
+    ).first()
+    if user is None or not verify_password(creds.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    return {"access_token": create_token(user.id), "token_type": "bearer"}
+
+
+@app.get("/auth/me")
+def me(user: User = Depends(get_current_user)):
+    return {"id": user.id, "username": user.username}
 
 
 @app.get("/games")
