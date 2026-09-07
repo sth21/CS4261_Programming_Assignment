@@ -51,7 +51,7 @@ def refresh_games(
     session: Session = Depends(get_session),
 ):
     raw_games = cfbd.fetch_games(season, week)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
 
     for raw in raw_games:
         data = cfbd.parse_game(raw)
