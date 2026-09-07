@@ -8,7 +8,9 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
     password_hash: str
-    created_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), default=utc_now, nullable=False),
+    )
 
 class Game(SQLModel, table=True):
     cfbd_id: int = Field(primary_key=True)
@@ -36,5 +38,9 @@ class Pick(SQLModel, table=True):
     game_id: int = Field(foreign_key="game.cfbd_id", index=True)
     predicted_winner: str
     is_correct: bool | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), default=utc_now, nullable=False),
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), default=utc_now, nullable=False),
+    )
