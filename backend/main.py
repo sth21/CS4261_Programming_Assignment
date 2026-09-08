@@ -72,7 +72,7 @@ def grade_pending_picks(session: Session) -> int:
 
 
 def is_locked(game: Game) -> bool:
-    """A game is locked once kickoff has passed."""
+    """A game is locked once kickoff has passed. TBD kickoffs stay open."""
     if game.start_date is None:
         return False
     kickoff = game.start_date
@@ -140,6 +140,23 @@ def list_games(
     return session.exec(query.order_by(Game.start_date)).all()
 
 
+@app.get("/games/current-week")
+def current_week(season: int = 2026, session: Session = Depends(get_session)):
+    """The earliest week that still has an unfinished game."""
+    incomplete = session.exec(
+        select(Game)
+        .where(Game.season == season, Game.completed == False)
+        .order_by(Game.start_date)
+    ).first()
+    if incomplete:
+        return {"week": incomplete.week}
+
+    latest = session.exec(
+        select(Game).where(Game.season == season).order_by(Game.start_date.desc())
+    ).first()
+    return {"week": latest.week if latest else 1}
+
+
 @app.post("/games/refresh")
 def refresh_games(
     season: int = 2026,
@@ -150,24 +167,6 @@ def refresh_games(
     graded = grade_pending_picks(session)
     return {"synced": synced, "graded": graded, "season": season, "week": week}
 
-@app.get("/games/current-week")
-def current_week(season: int = 2026, session: Session = Depends(get_session)):
-    now = datetime.now(timezone.utc)
-
-    upcoming = session.exec(
-        select(Game)
-        .where(Game.season == season, Game.start_date >= now)
-        .order_by(Game.start_date)
-    ).first()
-    if upcoming:
-        return {"week": upcoming.week}
-
-    latest = session.exec(
-        select(Game)
-        .where(Game.season == season)
-        .order_by(Game.start_date.desc())
-    ).first()
-    return {"week": latest.week if latest else 1}
 
 @app.get("/picks")
 def list_picks(

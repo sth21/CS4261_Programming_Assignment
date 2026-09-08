@@ -26,6 +26,10 @@ struct Game: Codable, Identifiable {
     
     var id: Int { cfbdId }
     
+    var isLocked: Bool {
+        startDate <= Date()
+    }
+    
     enum CodingKeys: String, CodingKey {
         case cfbdId = "cfbd_id"
         case season, week, completed, venue

@@ -6,6 +6,11 @@ enum APIError: Error {
     case server(Int)
 }
 
+struct PickBody: Encodable {
+    let game_id: Int
+    let predicted_winner: String
+}
+
 struct APIClient {
     static let baseURL = "https://cs4261-programming-assignment.onrender.com"
 
@@ -37,6 +42,17 @@ struct APIClient {
         } catch {
             throw APIError.offline
         }
+    }
+
+    static func authed(_ url: URL, method: String = "GET", token: String, body: Data? = nil) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        return request
     }
 
     struct TokenResponse: Codable {
@@ -100,5 +116,28 @@ struct APIClient {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         _ = try await send(request)
+    }
+
+    static func fetchPicks(token: String) async throws -> PicksResponse {
+        let url = URL(string: "\(baseURL)/picks")!
+        let data = try await send(authed(url, token: token))
+        return try decoder.decode(PicksResponse.self, from: data)
+    }
+
+    static func submitPick(gameId: Int, winner: String, token: String) async throws -> Pick {
+        let url = URL(string: "\(baseURL)/picks")!
+        let body = try JSONEncoder().encode(PickBody(game_id: gameId, predicted_winner: winner))
+        let data = try await send(authed(url, method: "POST", token: token, body: body))
+        return try decoder.decode(Pick.self, from: data)
+    }
+
+    static func deletePick(gameId: Int, token: String) async throws {
+        let url = URL(string: "\(baseURL)/picks/\(gameId)")!
+        _ = try await send(authed(url, method: "DELETE", token: token))
+    }
+
+    static func gradePicks(token: String) async throws {
+        let url = URL(string: "\(baseURL)/picks/grade")!
+        _ = try await send(authed(url, method: "POST", token: token))
     }
 }
