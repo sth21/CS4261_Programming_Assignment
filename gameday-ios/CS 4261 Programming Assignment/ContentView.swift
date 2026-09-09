@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(NotificationStore.self) private var notifications
 
     @State private var games: [Game] = []
     @State private var picks: [Int: Pick] = [:]
@@ -11,10 +12,9 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var loadError: APIError?
     @State private var isResolvingWeek = true
-    @State private var didResolveWeek = false
     @State private var slateIsFresh = false
     @State private var hasGraded = false
-    @State private var submitting: Set<Int> = []
+    @State private var submitting: [Int: String] = [:]
 
     let conferences = ["ACC", "Big Ten", "Big 12", "SEC", "Pac-12", "American Athletic",
                        "Conference USA", "Mid-American", "Mountain West", "Sun Belt",
@@ -84,10 +84,10 @@ struct ContentView: View {
 
     @ViewBuilder
     var content: some View {
-        if isResolvingWeek || (isLoading && games.isEmpty) {
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let loadError {
+        if let loadError {
             ErrorState(error: loadError) { Task { await retry() } }
+        } else if isResolvingWeek || (isLoading && games.isEmpty) {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if games.isEmpty {
             ContentUnavailableView(
                 "No games",
@@ -103,8 +103,11 @@ struct ContentView: View {
                     GameRow(
                         game: game,
                         pick: picks[game.cfbdId],
-                        isSubmitting: submitting.contains(game.cfbdId),
-                        onTap: { team in Task { await tap(game: game, team: team) } }
+                        submittingTeam: submitting[game.cfbdId],
+                        isSubscribed: notifications.isSubscribed(game.cfbdId),
+                        canSubscribe: notifications.canSchedule(game),
+                        onTap: { team in Task { await tap(game: game, team: team) } },
+                        onBell: { Task { _ = await notifications.toggle(game: game) } }
                     )
                 }
             }
@@ -113,26 +116,22 @@ struct ContentView: View {
         }
     }
 
-    func loadCurrentSlate(force: Bool = false) async {
-        guard isResolvingWeek || force else { return }
+    func loadCurrentSlate() async {
+        guard isResolvingWeek else { return }
+        loadError = nil
 
         do {
             let slate = try await APIClient.fetchCurrentSlate()
             if Task.isCancelled { return }
 
-            didResolveWeek = true
             games = slate.games
-            loadError = nil
             slateIsFresh = true
             week = slate.week
             isResolvingWeek = false
+
             await loadPicksAndGrade()
-        } catch is CancellationError {
-            return
         } catch {
-            didResolveWeek = false
-            isLoading = true
-            isResolvingWeek = false
+            report(error)
         }
     }
 
@@ -198,22 +197,18 @@ struct ContentView: View {
     }
 
     func retry() async {
-        loadError = nil
-
-        if !didResolveWeek {
-            let previous = week
-            await loadCurrentSlate(force: true)
-            if week != previous { return }
+        if isResolvingWeek {
+            await loadCurrentSlate()
+        } else {
+            await loadGames()
         }
-
-        await loadGames()
     }
 
     func tap(game: Game, team: String) async {
         guard !game.isLocked, let token = auth.token else { return }
 
-        submitting.insert(game.cfbdId)
-        defer { submitting.remove(game.cfbdId) }
+        submitting[game.cfbdId] = team
+        defer { submitting[game.cfbdId] = nil }
 
         do {
             if picks[game.cfbdId]?.predictedWinner == team {
@@ -313,8 +308,18 @@ struct ErrorState: View {
 struct GameRow: View {
     let game: Game
     let pick: Pick?
-    let isSubmitting: Bool
+    let submittingTeam: String?
+    let isSubscribed: Bool
+    let canSubscribe: Bool
     let onTap: (String) -> Void
+    let onBell: () -> Void
+
+    var bellEnabled: Bool { isSubscribed || canSubscribe }
+
+    var bellColor: Color {
+        if isSubscribed { return .accentColor }
+        return canSubscribe ? .secondary : Color(.tertiaryLabel)
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -324,11 +329,12 @@ struct GameRow: View {
                     name: game.awayTeam,
                     isPicked: pick?.predictedWinner == game.awayTeam,
                     isLocked: game.isLocked,
+                    isSubmitting: submittingTeam == game.awayTeam,
                     result: pick?.predictedWinner == game.awayTeam ? pick?.isCorrect : nil,
                     onTap: { onTap(game.awayTeam) }
                 )
 
-                VStack(spacing: 2) {
+                VStack(spacing: 4) {
                     if game.completed {
                         HStack(spacing: 10) {
                             Text("\(game.awayPoints ?? 0)")
@@ -349,6 +355,15 @@ struct GameRow: View {
                             Text("Locked")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                        } else {
+                            Image(systemName: isSubscribed ? "bell.fill" : "bell")
+                                .font(.footnote)
+                                .foregroundStyle(bellColor)
+                                .frame(width: 32, height: 24)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    if bellEnabled { onBell() }
+                                }
                         }
                     }
                 }
@@ -359,11 +374,11 @@ struct GameRow: View {
                     name: game.homeTeam,
                     isPicked: pick?.predictedWinner == game.homeTeam,
                     isLocked: game.isLocked,
+                    isSubmitting: submittingTeam == game.homeTeam,
                     result: pick?.predictedWinner == game.homeTeam ? pick?.isCorrect : nil,
                     onTap: { onTap(game.homeTeam) }
                 )
             }
-            .opacity(isSubmitting ? 0.5 : 1)
 
             if let venue = game.venue {
                 Text(venue).font(.caption2).foregroundStyle(.tertiary)
@@ -379,6 +394,7 @@ struct TeamSide: View {
     let name: String
     let isPicked: Bool
     let isLocked: Bool
+    let isSubmitting: Bool
     let result: Bool?
     let onTap: () -> Void
 
@@ -395,26 +411,27 @@ struct TeamSide: View {
     }
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 6) {
-                AsyncImage(url: logoURL) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    Circle().fill(Color(.tertiarySystemFill))
-                }
-                .frame(width: 44, height: 44)
-                .padding(4)
-                .overlay(Circle().stroke(ringColor, lineWidth: 3))
-
-                Text(name)
-                    .font(.caption.weight(isPicked ? .bold : .semibold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
+        VStack(spacing: 6) {
+            AsyncImage(url: logoURL) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                Circle().fill(Color(.tertiarySystemFill))
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 44, height: 44)
+            .padding(4)
+            .overlay(Circle().stroke(ringColor, lineWidth: 3))
+            .opacity(isSubmitting ? 0.4 : 1)
+
+            Text(name)
+                .font(.caption.weight(isPicked ? .bold : .semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
-        .buttonStyle(.plain)
-        .disabled(isLocked)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isLocked && !isSubmitting { onTap() }
+        }
     }
 }
 
@@ -440,4 +457,5 @@ struct Chip: View {
 #Preview {
     ContentView()
         .environment(AuthStore())
+        .environment(NotificationStore())
 }
