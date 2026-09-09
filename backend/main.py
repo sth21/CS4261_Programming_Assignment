@@ -58,43 +58,26 @@ def week_games(session: Session, season: int, week: int) -> list[Game]:
     return session.exec(
         select(Game)
         .where(Game.season == season, Game.week == week)
-        .order_by(Game.start_date)
+        .order_by(Game.start_date, Game.home_team, Game.cfbd_id)
     ).all()
 
 
-def has_game_in_play(games: list[Game], now: datetime) -> bool:
-    for game in games:
-        kickoff = as_utc(game.start_date)
-        if not game.completed and kickoff is not None and kickoff <= now:
-            return True
-    return False
-
-
 def resolve_current_week(session: Session, season: int) -> int:
-    now = datetime.now(timezone.utc)
-
     weeks = session.exec(
         select(Game.week).where(Game.season == season).distinct().order_by(Game.week)
     ).all()
 
     if not weeks:
-        try:
-            sync_week(session, season, 1)
-        except Exception:
-            session.rollback()
+        sync_week(session, season, 1)
         return 1
 
     for week in weeks:
         games = week_games(session, season, week)
-        if not games:
+        if not games or all(g.completed for g in games):
             continue
 
-        if has_game_in_play(games, now):
-            try:
-                sync_week(session, season, week)
-                games = week_games(session, season, week)
-            except Exception:
-                session.rollback()
+        sync_week(session, season, week)
+        games = week_games(session, season, week)
 
         if any(not g.completed for g in games):
             return week
@@ -183,7 +166,9 @@ def list_games(
             (Game.home_conference == conference) | (Game.away_conference == conference)
         )
 
-    return session.exec(query.order_by(Game.start_date)).all()
+    return session.exec(
+        query.order_by(Game.start_date, Game.home_team, Game.cfbd_id)
+    ).all()
 
 
 @app.get("/games/current")
