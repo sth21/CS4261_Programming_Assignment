@@ -1,10 +1,3 @@
-//
-//  Game.swift
-//  CS 4261 Programming Assignment
-//
-//  Created by Sam Heseltine on 9/6/26.
-//
-
 import Foundation
 
 struct Game: Codable, Identifiable {

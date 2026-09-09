@@ -1,10 +1,3 @@
-//
-//  Pick.swift
-//  CS 4261 Programming Assignment
-//
-//  Created by Sam Heseltine on 9/7/26.
-//
-
 import Foundation
 
 struct Pick: Codable, Identifiable {

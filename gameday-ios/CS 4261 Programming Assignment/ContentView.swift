@@ -10,7 +10,10 @@ struct ContentView: View {
     @State private var conference: String?
     @State private var isLoading = false
     @State private var loadError: APIError?
-    @State private var hasResolvedWeek = false
+    @State private var isResolvingWeek = true
+    @State private var didResolveWeek = false
+    @State private var slateIsFresh = false
+    @State private var hasGraded = false
     @State private var submitting: Set<Int> = []
 
     let conferences = ["ACC", "Big Ten", "Big 12", "SEC", "Pac-12", "American Athletic",
@@ -18,6 +21,8 @@ struct ContentView: View {
                        "FBS Independents"]
 
     var lastSynced: Date? { games.map(\.lastSyncedAt).max() }
+
+    var gamesKey: String { "\(isResolvingWeek)-\(week)-\(conference ?? "all")" }
 
     var body: some View {
         NavigationStack {
@@ -27,7 +32,9 @@ struct ContentView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(1...15, id: \.self) { w in
-                            Chip(label: "Week \(w)", isSelected: week == w) { week = w }
+                            Chip(label: "Week \(w)", isSelected: !isResolvingWeek && week == w) {
+                                week = w
+                            }
                         }
                     }
                     .padding(.horizontal)
@@ -55,7 +62,7 @@ struct ContentView: View {
 
                 content
             }
-            .navigationTitle("Week \(week)")
+            .navigationTitle(isResolvingWeek ? "NCAAFB Pick'em" : "Week \(week)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -67,19 +74,20 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .disabled(isLoading)
+                    .disabled(isLoading || isResolvingWeek)
                 }
             }
-            .task(id: "\(week)-\(conference ?? "all")") { await load() }
+            .task { await loadCurrentSlate() }
+            .task(id: gamesKey) { await loadGames() }
         }
     }
 
     @ViewBuilder
     var content: some View {
-        if isLoading && games.isEmpty {
+        if isResolvingWeek || (isLoading && games.isEmpty) {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let loadError {
-            ErrorState(error: loadError) { Task { await load() } }
+            ErrorState(error: loadError) { Task { await retry() } }
         } else if games.isEmpty {
             ContentUnavailableView(
                 "No games",
@@ -105,6 +113,102 @@ struct ContentView: View {
         }
     }
 
+    func loadCurrentSlate(force: Bool = false) async {
+        guard isResolvingWeek || force else { return }
+
+        do {
+            let slate = try await APIClient.fetchCurrentSlate()
+            if Task.isCancelled { return }
+
+            didResolveWeek = true
+            games = slate.games
+            loadError = nil
+            slateIsFresh = true
+            week = slate.week
+            isResolvingWeek = false
+            await loadPicksAndGrade()
+        } catch is CancellationError {
+            return
+        } catch {
+            didResolveWeek = false
+            isLoading = true
+            isResolvingWeek = false
+        }
+    }
+
+    func loadGames() async {
+        guard !isResolvingWeek else { return }
+        if slateIsFresh { slateIsFresh = false; return }
+
+        isLoading = true
+        loadError = nil
+        defer { if !Task.isCancelled { isLoading = false } }
+
+        do {
+            var fetched = try await APIClient.fetchGames(week: week, conference: conference)
+
+            if fetched.isEmpty && conference == nil {
+                try await APIClient.refreshGames(week: week)
+                fetched = try await APIClient.fetchGames(week: week)
+            }
+
+            if Task.isCancelled { return }
+            games = fetched
+            loadError = nil
+
+            await loadPicksAndGrade()
+        } catch {
+            report(error)
+        }
+    }
+
+    func loadPicksAndGrade() async {
+        guard let token = auth.token else { return }
+
+        do {
+            try await loadPicks(token: token)
+        } catch {
+            report(error)
+            return
+        }
+
+        if !hasGraded {
+            hasGraded = true
+            try? await APIClient.gradePicks(token: token)
+            try? await loadPicks(token: token)
+        }
+    }
+
+    func refresh() async {
+        isLoading = true
+        defer { if !Task.isCancelled { isLoading = false } }
+
+        do {
+            try await APIClient.refreshGames(week: week)
+            let fetched = try await APIClient.fetchGames(week: week, conference: conference)
+            if Task.isCancelled { return }
+            games = fetched
+            loadError = nil
+            if let token = auth.token {
+                try await loadPicks(token: token)
+            }
+        } catch {
+            report(error)
+        }
+    }
+
+    func retry() async {
+        loadError = nil
+
+        if !didResolveWeek {
+            let previous = week
+            await loadCurrentSlate(force: true)
+            if week != previous { return }
+        }
+
+        await loadGames()
+    }
+
     func tap(game: Game, team: String) async {
         guard !game.isLocked, let token = auth.token else { return }
 
@@ -122,77 +226,36 @@ struct ContentView: View {
                 picks[game.cfbdId] = pick
             }
             try await loadPicks(token: token)
-        } catch APIError.unauthorized {
-            auth.logOut()
         } catch {
-            print("tap error: \(error)")
-            await load()
+            if error is CancellationError { return }
+            if let apiError = error as? APIError, case .unauthorized = apiError {
+                auth.logOut()
+                return
+            }
+            await loadGames()
         }
     }
 
     func loadPicks(token: String) async throws {
         let response = try await APIClient.fetchPicks(token: token)
+        if Task.isCancelled { return }
         picks = Dictionary(uniqueKeysWithValues: response.picks.map { ($0.gameId, $0) })
         record = response.record
     }
 
-    func load() async {
-        isLoading = true
-        loadError = nil
-        defer { isLoading = false }
+    func report(_ error: Error) {
+        if error is CancellationError { return }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return }
 
-        do {
-            if !hasResolvedWeek {
-                print("resolving current week…")
-                week = (try? await APIClient.fetchCurrentWeek()) ?? 1
-                print("resolved to week \(week)")
-                hasResolvedWeek = true
-                if let token = auth.token {
-                    try? await APIClient.gradePicks(token: token)
-                }
-            }
-
-            print("fetching games week=\(week) conference=\(conference ?? "nil")")
-            games = try await APIClient.fetchGames(week: week, conference: conference)
-            print("got \(games.count) games")
-
-            if games.isEmpty && conference == nil {
-                try await APIClient.refreshGames(week: week)
-                games = try await APIClient.fetchGames(week: week)
-            }
-
-            if let token = auth.token {
-                try await loadPicks(token: token)
-                print("picks loaded")
-            }
-        } catch APIError.unauthorized {
-            auth.logOut()
-        } catch let error as APIError {
-            print("load APIError: \(error)")
-            loadError = error
-        } catch {
-            print("load unknown error: \(error)")
+        guard let apiError = error as? APIError else {
             loadError = .offline
+            return
         }
-    }
-
-    func refresh() async {
-        loadError = nil
-        do {
-            try await APIClient.refreshGames(week: week)
-            games = try await APIClient.fetchGames(week: week, conference: conference)
-            if let token = auth.token {
-                try await loadPicks(token: token)
-            }
-        } catch APIError.unauthorized {
+        if case .unauthorized = apiError {
             auth.logOut()
-        } catch let error as APIError {
-            print("refresh APIError: \(error)")
-            loadError = error
-        } catch {
-            print("refresh unknown error: \(error)")
-            loadError = .offline
+            return
         }
+        loadError = apiError
     }
 }
 
@@ -226,6 +289,7 @@ struct ErrorState: View {
         switch error {
         case .offline: "Can't reach the server. Check your connection."
         case .server: "Something went wrong on our end."
+        case .decoding: "The server sent something we couldn't read."
         case .unauthorized: "Your session expired."
         }
     }

@@ -4,6 +4,7 @@ enum APIError: Error {
     case unauthorized
     case offline
     case server(Int)
+    case decoding
 }
 
 struct PickBody: Encodable {
@@ -22,9 +23,18 @@ struct APIClient {
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForRequest = 90
+        config.timeoutIntervalForResource = 120
         return URLSession(configuration: config)
     }()
+
+    static func normalized(_ error: Error) -> Error {
+        if error is CancellationError { return CancellationError() }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return CancellationError()
+        }
+        return APIError.offline
+    }
 
     static func send(_ request: URLRequest) async throws -> Data {
         do {
@@ -40,7 +50,15 @@ struct APIClient {
         } catch let error as APIError {
             throw error
         } catch {
-            throw APIError.offline
+            throw normalized(error)
+        }
+    }
+
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            throw APIError.decoding
         }
     }
 
@@ -62,8 +80,9 @@ struct APIClient {
         }
     }
 
-    struct WeekResponse: Codable {
+    struct CurrentSlate: Codable {
         let week: Int
+        let games: [Game]
     }
 
     static func authenticate(username: String, password: String, register: Bool) async throws -> String {
@@ -73,22 +92,25 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["username": username, "password": password])
 
+        let data: Data
         do {
-            let (data, response) = try await session.data(for: request)
+            let (body, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.server(-1) }
             guard http.statusCode == 200 else { throw APIError.server(http.statusCode) }
-            return try decoder.decode(TokenResponse.self, from: data).accessToken
+            data = body
         } catch let error as APIError {
             throw error
         } catch {
-            throw APIError.offline
+            throw normalized(error)
         }
+
+        return try decode(TokenResponse.self, from: data).accessToken
     }
 
-    static func fetchCurrentWeek(season: Int = 2026) async throws -> Int {
-        let url = URL(string: "\(baseURL)/games/current-week?season=\(season)")!
+    static func fetchCurrentSlate(season: Int = 2026) async throws -> CurrentSlate {
+        let url = URL(string: "\(baseURL)/games/current?season=\(season)")!
         let data = try await send(URLRequest(url: url))
-        return try decoder.decode(WeekResponse.self, from: data).week
+        return try decode(CurrentSlate.self, from: data)
     }
 
     static func fetchGames(season: Int = 2026, week: Int, conference: String? = nil) async throws -> [Game] {
@@ -103,7 +125,7 @@ struct APIClient {
         components.queryItems = items
 
         let data = try await send(URLRequest(url: components.url!))
-        return try decoder.decode([Game].self, from: data)
+        return try decode([Game].self, from: data)
     }
 
     static func refreshGames(season: Int = 2026, week: Int) async throws {
@@ -121,14 +143,14 @@ struct APIClient {
     static func fetchPicks(token: String) async throws -> PicksResponse {
         let url = URL(string: "\(baseURL)/picks")!
         let data = try await send(authed(url, token: token))
-        return try decoder.decode(PicksResponse.self, from: data)
+        return try decode(PicksResponse.self, from: data)
     }
 
     static func submitPick(gameId: Int, winner: String, token: String) async throws -> Pick {
         let url = URL(string: "\(baseURL)/picks")!
         let body = try JSONEncoder().encode(PickBody(game_id: gameId, predicted_winner: winner))
         let data = try await send(authed(url, method: "POST", token: token, body: body))
-        return try decoder.decode(Pick.self, from: data)
+        return try decode(Pick.self, from: data)
     }
 
     static func deletePick(gameId: Int, token: String) async throws {

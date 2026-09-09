@@ -29,8 +29,13 @@ class PickRequest(BaseModel):
     predicted_winner: str
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 def sync_week(session: Session, season: int, week: int) -> int:
-    """Fetch a week from CFBD and upsert into the games table."""
     raw_games = cfbd.fetch_games(season, week)
     now = datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -49,8 +54,55 @@ def sync_week(session: Session, season: int, week: int) -> int:
     return len(raw_games)
 
 
+def week_games(session: Session, season: int, week: int) -> list[Game]:
+    return session.exec(
+        select(Game)
+        .where(Game.season == season, Game.week == week)
+        .order_by(Game.start_date)
+    ).all()
+
+
+def has_game_in_play(games: list[Game], now: datetime) -> bool:
+    for game in games:
+        kickoff = as_utc(game.start_date)
+        if not game.completed and kickoff is not None and kickoff <= now:
+            return True
+    return False
+
+
+def resolve_current_week(session: Session, season: int) -> int:
+    now = datetime.now(timezone.utc)
+
+    weeks = session.exec(
+        select(Game.week).where(Game.season == season).distinct().order_by(Game.week)
+    ).all()
+
+    if not weeks:
+        try:
+            sync_week(session, season, 1)
+        except Exception:
+            session.rollback()
+        return 1
+
+    for week in weeks:
+        games = week_games(session, season, week)
+        if not games:
+            continue
+
+        if has_game_in_play(games, now):
+            try:
+                sync_week(session, season, week)
+                games = week_games(session, season, week)
+            except Exception:
+                session.rollback()
+
+        if any(not g.completed for g in games):
+            return week
+
+    return weeks[-1]
+
+
 def grade_pending_picks(session: Session) -> int:
-    """Grade any ungraded pick whose game has a final score."""
     picks = session.exec(select(Pick).where(Pick.is_correct == None)).all()
     graded = 0
 
@@ -72,12 +124,9 @@ def grade_pending_picks(session: Session) -> int:
 
 
 def is_locked(game: Game) -> bool:
-    """A game is locked once kickoff has passed. TBD kickoffs stay open."""
-    if game.start_date is None:
+    kickoff = as_utc(game.start_date)
+    if kickoff is None:
         return False
-    kickoff = game.start_date
-    if kickoff.tzinfo is None:
-        kickoff = kickoff.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) >= kickoff
 
 
@@ -122,7 +171,6 @@ def me(user: User = Depends(get_current_user)):
 def list_games(
     season: int = 2026,
     week: int | None = Query(None, ge=1, le=15),
-    team: str | None = None,
     conference: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -130,8 +178,6 @@ def list_games(
 
     if week is not None:
         query = query.where(Game.week == week)
-    if team is not None:
-        query = query.where((Game.home_team == team) | (Game.away_team == team))
     if conference is not None:
         query = query.where(
             (Game.home_conference == conference) | (Game.away_conference == conference)
@@ -140,21 +186,10 @@ def list_games(
     return session.exec(query.order_by(Game.start_date)).all()
 
 
-@app.get("/games/current-week")
-def current_week(season: int = 2026, session: Session = Depends(get_session)):
-    """The earliest week that still has an unfinished game."""
-    incomplete = session.exec(
-        select(Game)
-        .where(Game.season == season, Game.completed == False)
-        .order_by(Game.start_date)
-    ).first()
-    if incomplete:
-        return {"week": incomplete.week}
-
-    latest = session.exec(
-        select(Game).where(Game.season == season).order_by(Game.start_date.desc())
-    ).first()
-    return {"week": latest.week if latest else 1}
+@app.get("/games/current")
+def current_slate(season: int = 2026, session: Session = Depends(get_session)):
+    week = resolve_current_week(session, season)
+    return {"week": week, "games": week_games(session, season, week)}
 
 
 @app.post("/games/refresh")
@@ -191,7 +226,6 @@ def grade_picks(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """Sync only the weeks holding ungraded picks, then grade them."""
     pending = session.exec(
         select(Pick).where(Pick.user_id == user.id, Pick.is_correct == None)
     ).all()
